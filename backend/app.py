@@ -269,10 +269,14 @@ def _sse_auth_generator(question: str, role: str, username: str, session_id: str
 
 
 @app.get("/api/chat/stream")
-def chat_stream(q: str = Query(..., description="Query text"), role: str = Query("Public")):
-    """Public SSE streaming endpoint — no auth, no history saved."""
+def chat_stream(q: str = Query(..., description="Query text")):
+    """Public SSE streaming endpoint — no auth, no history saved.
+
+    Always retrieves as role=Public. The role is never taken from the request,
+    so an unauthenticated caller cannot ask for Student/Faculty/Admin content.
+    """
     return StreamingResponse(
-        _sse_public_generator(question=q, role=role),
+        _sse_public_generator(question=q, role="Public"),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
