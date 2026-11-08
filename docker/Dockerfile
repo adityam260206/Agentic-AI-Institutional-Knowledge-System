@@ -30,14 +30,14 @@ WORKDIR /app
 COPY . .
 
 # Create persistent directories (volumes will mount here)
-RUN mkdir -p data/staging vector_store/chroma_db
+RUN mkdir -p data/staging vector_store/chroma_db state
 
 # Expose FastAPI port
 EXPOSE 8000
 
-# Health-check: ping the API
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8000/api/admin/stats', headers={'Authorization':'Bearer dummy'}, timeout=5)"
+# Health-check: the web UI is served at /
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
+    CMD python -c "import httpx,sys; sys.exit(0 if httpx.get('http://localhost:8000/', timeout=5).status_code == 200 else 1)"
 
-# Startup: seed the DB if needed, then launch uvicorn
-CMD ["sh", "-c", "python seed_users.py 2>/dev/null; uvicorn backend.app:app --host 0.0.0.0 --port 8000 --workers 1"]
+# Startup: seed users once, wait for Ollama, launch uvicorn
+CMD ["sh", "docker/start.sh"]

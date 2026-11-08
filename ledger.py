@@ -2,7 +2,11 @@ import sqlite3
 import os
 from datetime import datetime
 
-DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "ingestion_ledger.db"))
+# LEDGER_DB_PATH lets Docker keep the ledger on a volume outside the code.
+DB_PATH = os.path.abspath(
+    os.environ.get("LEDGER_DB_PATH")
+    or os.path.join(os.path.dirname(__file__), "ingestion_ledger.db")
+)
 
 # Phase 2 columns added to the original Phase 1 documents table.
 _PHASE2_DOCUMENT_COLUMNS = {

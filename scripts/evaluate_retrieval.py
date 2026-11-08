@@ -255,8 +255,8 @@ def compute_metrics(
 def _get_dept_totals() -> dict:
     """Count chunks per department from SQLite for recall computation."""
     import sqlite3
-    db_path = os.path.join(os.path.dirname(__file__), "..", "ingestion_ledger.db")
-    conn = sqlite3.connect(os.path.abspath(db_path))
+    import ledger
+    conn = sqlite3.connect(ledger.DB_PATH)
     cur  = conn.cursor()
     cur.execute("SELECT department, COUNT(*) FROM chunks GROUP BY department")
     totals = {row[0]: row[1] for row in cur.fetchall()}

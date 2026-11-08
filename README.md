@@ -121,6 +121,31 @@ Then open <http://localhost:8000>. Use it as a guest, or sign in with one of the
 
 An alternative Streamlit client is in `frontend/ui.py`. It needs `pip install streamlit`, then `streamlit run frontend/ui.py`.
 
+### Run with Docker Compose
+
+Compose starts Ollama, pulls `qwen3:8b` once, then starts the app. Code stays in the image; databases, vectors, uploaded documents and model caches live on named volumes, so rebuilds keep your data.
+
+```bash
+export JWT_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+docker compose -f docker/docker-compose.yml up --build
+```
+
+The first start downloads about 5 GB for Qwen3 plus the BGE models, so it takes a while. Demo users are created on the first start only; restarts keep accounts and chat history.
+
+To index documents, either sign in as `admin_test` and upload through the UI, or copy files in and run the pipeline:
+
+```bash
+docker compose -f docker/docker-compose.yml cp ./my-docs/. edumind:/app/data/staging/
+docker compose -f docker/docker-compose.yml exec edumind sh -c "python ingestion_pipeline.py && python vector_store/index_pipeline.py"
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server |
+| `JWT_SECRET_KEY` | insecure dev fallback (required in Compose) | Signs login tokens |
+| `LEDGER_DB_PATH` | `./ingestion_ledger.db` | Ingestion ledger and chunk store |
+| `DATABASE_URL` | `sqlite:///./institutional.db` | Users and chat history |
+
 ### API
 
 | Method | Endpoint | Auth | Purpose |
@@ -174,15 +199,14 @@ rag/            Prompt builder, Ollama client, citation engine, RAG engine
 vector_store/   ChromaDB wrapper and indexing pipeline
 frontend/       Web UI served by FastAPI (index.html, app.js) and a Streamlit client
 scripts/        Retrieval evaluation
-docker/         Dockerfile and Compose file (see limitations)
+docker/         Dockerfile, Compose file and container entrypoint
 tests/          pytest suite
 ```
 
 ## Known limitations
 
-- **Docker Compose is not yet working end to end.** `rag/ollama_client.py` always connects to `localhost:11434` and ignores the `OLLAMA_BASE_URL` that Compose sets, so the app container can't reach the Ollama container. The `sqlite_data:/app` volume also shadows the application code after the first build. Run locally until both are fixed.
 - **Access levels are inferred from document text.** Unmarked documents default to Public. A production deployment would need explicit, reviewed access metadata.
-- **`JWT_SECRET_KEY` has an insecure fallback** in `backend/auth.py`. Always set it.
+- **`JWT_SECRET_KEY` has an insecure fallback** in `backend/auth.py` for local development. Always set it; Docker Compose refuses to start without it.
 - **Streamlit isn't in `requirements.txt`** (it's only needed for `frontend/ui.py`).
 - **No corpus, screenshots or published benchmark numbers yet.** See Evaluation.
 

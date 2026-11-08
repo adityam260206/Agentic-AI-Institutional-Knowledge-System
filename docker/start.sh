@@ -1,50 +1,48 @@
-#!/bin/bash
-# ── EduMind AI — Docker startup script ────────────────────────────────────────
-# Runs inside the container; handles Ollama env var override.
+#!/bin/sh
+# ── EduMind AI — container entrypoint ─────────────────────────────────────────
+# Creates the state directory, seeds demo users once, waits for Ollama, then
+# starts the API. Uses Python for HTTP checks (the slim image has no curl).
 
 set -e
-
-# Override Ollama base URL if set via environment (Docker Compose passes this)
-if [ -n "$OLLAMA_BASE_URL" ]; then
-    echo "[STARTUP] Ollama base URL: $OLLAMA_BASE_URL"
-fi
-
-# Patch rag/ollama_client.py default base_url at runtime if needed
-# (The OllamaConfig default is localhost:11434; in Docker we point to the ollama service)
 export PYTHONPATH="/app:${PYTHONPATH}"
 
-# Seed the users database (idempotent — only creates if not exists)
-echo "[STARTUP] Seeding database..."
-python -c "
-from backend.database import Base, engine
+mkdir -p "$(dirname "${LEDGER_DB_PATH:-/app/ingestion_ledger.db}")"
+
+# seed_users.py drops all tables, so only seed when there are no users yet;
+# restarts keep accounts and chat history.
+python - <<'EOF'
+from backend.database import Base, SessionLocal, User, engine
 Base.metadata.create_all(bind=engine)
-from backend.database import SessionLocal, User
-from backend.auth import hash_password
 db = SessionLocal()
-if not db.query(User).first():
-    from seed_users import SEED_USERS
-    for e in SEED_USERS:
-        db.add(User(username=e['username'], hashed_password=hash_password(e['password']), role=e['role']))
-    db.commit()
-    print('[STARTUP] Users seeded.')
-else:
-    print('[STARTUP] Users already present.')
-db.close()
-" 2>/dev/null || echo "[STARTUP] DB seed skipped (already exists)"
+try:
+    if db.query(User).first():
+        print("[STARTUP] Users already present; not seeding.")
+    else:
+        from backend.auth import hash_password
+        from seed_users import SEED_USERS
+        for e in SEED_USERS:
+            db.add(User(username=e["username"], hashed_password=hash_password(e["password"]), role=e["role"]))
+        db.commit()
+        print("[STARTUP] Seeded demo users.")
+finally:
+    db.close()
+EOF
 
-# Wait for Ollama if OLLAMA_BASE_URL is set
-if [ -n "$OLLAMA_BASE_URL" ]; then
-    echo "[STARTUP] Waiting for Ollama at $OLLAMA_BASE_URL ..."
-    for i in $(seq 1 30); do
-        if curl -sf "$OLLAMA_BASE_URL/" > /dev/null 2>&1; then
-            echo "[STARTUP] Ollama is ready."
-            break
-        fi
-        echo "[STARTUP]   attempt $i/30..."
-        sleep 3
-    done
-fi
+OLLAMA="${OLLAMA_BASE_URL:-http://localhost:11434}"
+echo "[STARTUP] Waiting for Ollama at $OLLAMA ..."
+python - "$OLLAMA" <<'EOF'
+import sys, time, httpx
+url = sys.argv[1]
+for attempt in range(1, 31):
+    try:
+        httpx.get(url, timeout=3)
+        print("[STARTUP] Ollama is ready.")
+        sys.exit(0)
+    except httpx.HTTPError:
+        print(f"[STARTUP]   attempt {attempt}/30...")
+        time.sleep(3)
+print("[STARTUP] Ollama not reachable; starting anyway (chat will fail until it is).")
+EOF
 
-# Launch FastAPI
-echo "[STARTUP] Starting EduMind FastAPI server..."
+echo "[STARTUP] Starting FastAPI on :8000"
 exec uvicorn backend.app:app --host 0.0.0.0 --port 8000 --workers 1

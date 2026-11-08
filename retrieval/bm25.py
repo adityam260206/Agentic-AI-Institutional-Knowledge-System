@@ -117,9 +117,8 @@ class BM25Index:
         import os
 
         if db_path is None:
-            db_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "..", "ingestion_ledger.db"
-            )
+            import ledger  # single source of truth for the ledger location
+            db_path = ledger.DB_PATH
 
         logger.info("[BM25] Building index from SQLite...")
         conn = sqlite3.connect(os.path.abspath(db_path))

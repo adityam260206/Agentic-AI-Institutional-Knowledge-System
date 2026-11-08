@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
 import time
 from typing import Iterator, Optional
@@ -35,7 +36,9 @@ logger = logging.getLogger(__name__)
 class OllamaConfig(BaseModel):
     """All parameters controlling the Ollama connection and generation."""
 
-    base_url:       str   = Field(default="http://localhost:11434")
+    # OLLAMA_BASE_URL lets Docker Compose point the app at the `ollama` service.
+    base_url:       str   = Field(default_factory=lambda: os.environ.get(
+                                      "OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/"))
     model:          str   = Field(default="qwen3:8b")
 
     # Reasoning toggle. qwen3 is a hybrid reasoning model: by default newer

@@ -1,35 +1,31 @@
-version: "3.9"
-
 # ── EduMind AI — Docker Compose ────────────────────────────────────────────────
 #
 # Services:
-#   edumind     — FastAPI application (port 8000)
-#   ollama      — Ollama LLM server (port 11434); GPU-accelerated if available
+#   ollama       — Ollama LLM server (port 11434); GPU-accelerated if enabled below
+#   ollama-init  — one-shot job that pulls qwen3:8b before the app starts
+#   edumind      — FastAPI application and web UI (port 8000)
 #
-# Persistent volumes:
-#   chroma_data — ChromaDB vector store
-#   sqlite_data — SQLite ledger (ingestion_ledger.db) + institutional.db
-#   ollama_data — Ollama model cache (avoids re-downloading qwen3:8b on restart)
-#   staging_vol — uploaded document staging area
+# Persistent volumes (code stays in the image; only state lives on volumes):
+#   edumind_state      — SQLite: ingestion_ledger.db + institutional.db
+#   edumind_chroma     — ChromaDB vector store
+#   edumind_staging    — documents to ingest (data/staging)
+#   edumind_hf_cache   — Hugging Face models (BGE embedder + reranker)
+#   edumind_ollama     — Ollama model cache
 #
-# Usage:
-#   docker compose up --build           # first run (builds image, downloads model)
-#   docker compose up -d                # subsequent runs (detached)
-#   docker compose logs -f edumind      # tail application logs
-#   docker compose exec edumind bash    # shell into app container
+# Usage (from the repository root):
+#   JWT_SECRET_KEY=<long random string> docker compose -f docker/docker-compose.yml up --build
+#   (or put JWT_SECRET_KEY in a .env file next to this compose file)
 
 services:
 
-  # ── Ollama LLM server ────────────────────────────────────────────────────────
   ollama:
     image: ollama/ollama:latest
-    container_name: edumind_ollama
     restart: unless-stopped
     ports:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
-    # GPU acceleration: uncomment the deploy block if NVIDIA GPU is available
+    # GPU acceleration: uncomment if an NVIDIA GPU and the container toolkit are available
     # deploy:
     #   resources:
     #     reservations:
@@ -38,71 +34,56 @@ services:
     #           count: all
     #           capabilities: [gpu]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
-      interval: 30s
+      # The ollama image has no curl; the CLI talks to the local server instead.
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
       timeout: 10s
-      retries: 5
-      start_period: 30s
+      retries: 10
+      start_period: 20s
 
-  # ── Model pull (one-shot init job) ───────────────────────────────────────────
   ollama-init:
     image: ollama/ollama:latest
-    container_name: edumind_ollama_init
     depends_on:
       ollama:
         condition: service_healthy
-    volumes:
-      - ollama_data:/root/.ollama
-    entrypoint: >
-      sh -c "
-        OLLAMA_HOST=http://ollama:11434 ollama pull qwen3:8b &&
-        echo 'Model qwen3:8b ready.'
-      "
+    environment:
+      OLLAMA_HOST: "http://ollama:11434"
+    entrypoint: ["ollama", "pull", "qwen3:8b"]
     restart: "no"
 
-  # ── EduMind application ───────────────────────────────────────────────────────
   edumind:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    container_name: edumind_app
     restart: unless-stopped
     ports:
       - "8000:8000"
     depends_on:
       ollama:
         condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
     environment:
-      # Ollama endpoint — points to the sibling container
       OLLAMA_BASE_URL: "http://ollama:11434"
-      # JWT secret — change this in production!
-      JWT_SECRET_KEY: "change-me-in-production-use-a-long-random-string"
-      # HuggingFace token (optional — removes rate-limit warnings)
-      # HF_TOKEN: "hf_..."
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:?Set JWT_SECRET_KEY (a long random string) before starting}"
+      LEDGER_DB_PATH: "/app/state/ingestion_ledger.db"
+      DATABASE_URL: "sqlite:////app/state/institutional.db"
       HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
-      # Python path includes project root
       PYTHONPATH: "/app"
     volumes:
+      - state_data:/app/state
       - chroma_data:/app/vector_store/chroma_db
-      - sqlite_data:/app
-      - staging_vol:/app/data/staging
-      # Mount HuggingFace model cache so models survive container rebuilds
+      - staging_data:/app/data/staging
       - hf_cache:/root/.cache/huggingface
-    healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; r=httpx.get('http://localhost:8000/'); exit(0 if r.status_code==200 else 1)"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 90s
 
 volumes:
   ollama_data:
-    name: edumind_ollama_data
+    name: edumind_ollama
+  state_data:
+    name: edumind_state
   chroma_data:
-    name: edumind_chroma_data
-  sqlite_data:
-    name: edumind_sqlite_data
-  staging_vol:
+    name: edumind_chroma
+  staging_data:
     name: edumind_staging
   hf_cache:
     name: edumind_hf_cache

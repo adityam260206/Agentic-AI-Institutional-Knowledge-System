@@ -28,3 +28,7 @@ Thumbs.db
 # Git
 .git/
 .gitignore
+
+# Institutional documents and runtime state never go into the image
+data/
+state/
